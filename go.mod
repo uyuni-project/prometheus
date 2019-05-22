@@ -51,6 +51,7 @@ require (
 	github.com/json-iterator/go v1.1.6
 	github.com/jtolds/gls v4.2.1+incompatible // indirect
 	github.com/knz/strtime v0.0.0-20181018220328-af2256ee352c // indirect
+	github.com/kolo/xmlrpc v0.0.0-20190909154602-56d5ec7c422e
 	github.com/lib/pq v1.0.0 // indirect
 	github.com/lightstep/lightstep-tracer-go v0.15.6 // indirect
 	github.com/mattn/go-runewidth v0.0.4 // indirect
