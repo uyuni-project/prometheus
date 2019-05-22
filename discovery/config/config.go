@@ -27,6 +27,7 @@ import (
 	"github.com/prometheus/prometheus/discovery/openstack"
 	"github.com/prometheus/prometheus/discovery/targetgroup"
 	"github.com/prometheus/prometheus/discovery/triton"
+	"github.com/prometheus/prometheus/discovery/uyuni"
 	"github.com/prometheus/prometheus/discovery/zookeeper"
 )
 
@@ -58,6 +59,8 @@ type ServiceDiscoveryConfig struct {
 	AzureSDConfigs []*azure.SDConfig `yaml:"azure_sd_configs,omitempty"`
 	// List of Triton service discovery configurations.
 	TritonSDConfigs []*triton.SDConfig `yaml:"triton_sd_configs,omitempty"`
+	// List of Uyuni service discovery configurations.
+	UyuniSDConfigs []*uyuni.SDConfig `yaml:"uyuni_sd_configs,omitempty"`
 }
 
 // Validate validates the ServiceDiscoveryConfig.

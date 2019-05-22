@@ -37,6 +37,7 @@ import (
 	"github.com/prometheus/prometheus/discovery/marathon"
 	"github.com/prometheus/prometheus/discovery/openstack"
 	"github.com/prometheus/prometheus/discovery/triton"
+	"github.com/prometheus/prometheus/discovery/uyuni"
 	"github.com/prometheus/prometheus/discovery/zookeeper"
 )
 
@@ -404,6 +405,11 @@ func (m *Manager) registerProviders(cfg sd_config.ServiceDiscoveryConfig, setNam
 	for _, c := range cfg.TritonSDConfigs {
 		add(c, func() (Discoverer, error) {
 			return triton.New(log.With(m.logger, "discovery", "triton"), c)
+		})
+	}
+	for _, c := range cfg.UyuniSDConfigs {
+		add(c, func() (Discoverer, error) {
+			return uyuni.NewDiscovery(c, log.With(m.logger, "discovery", "uyuni")), nil
 		})
 	}
 	if len(cfg.StaticConfigs) > 0 {
