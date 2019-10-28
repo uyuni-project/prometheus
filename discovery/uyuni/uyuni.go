@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -66,6 +67,7 @@ type systemDetail struct {
 }
 
 type groupDetail struct {
+	Id              int    `xmlrpc:"id"`
 	Subscribed      int    `xmlrpc:"subscribed"`
 	SystemGroupName string `xmlrpc:"system_group_name"`
 }
@@ -82,6 +84,7 @@ type exporterConfig struct {
 type formulaData struct {
 	NodeExporter     exporterConfig `xmlrpc:"node_exporter"`
 	PostgresExporter exporterConfig `xmlrpc:"postgres_exporter"`
+	ApacheExporter   exporterConfig `xmlrpc:"apache_exporter"`
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
@@ -135,7 +138,7 @@ func GetSystemDetails(rpcclient *xmlrpc.Client, token string, systemId int) (sys
 	return result, err
 }
 
-// Get system group
+// Get list of groups a system belongs to
 func ListSystemGroups(rpcclient *xmlrpc.Client, token string, systemId int) ([]groupDetail, error) {
 	var result []groupDetail
 	err := rpcclient.Call("system.listGroups", []interface{}{token, systemId}, &result)
@@ -156,6 +159,13 @@ func GetSystemFormulaData(rpcclient *xmlrpc.Client, token string, systemId int, 
 	return result, err
 }
 
+// Get formula data for a given group
+func GetGroupFormulaData(rpcclient *xmlrpc.Client, token string, groupId int, formulaName string) (formulaData, error) {
+	var result formulaData
+	err := rpcclient.Call("formula.getGroupFormulaData", []interface{}{token, groupId, formulaName}, &result)
+	return result, err
+}
+
 // Get exporter port configuration from Formula
 func ExtractPortFromFormulaData(args string) (string, error) {
 	tokens := monFormulaRegex.FindStringSubmatch(args)
@@ -163,6 +173,21 @@ func ExtractPortFromFormulaData(args string) (string, error) {
 		return "", errors.New("Unable to find port in args: " + args)
 	}
 	return tokens[1], nil
+}
+
+// Take a current formula structure and override values if the new config is set
+// Used for calculating final formula values when using groups
+func GetCombinedFormula(combined formulaData, new formulaData) formulaData {
+	if new.NodeExporter.Enabled {
+		combined.NodeExporter = new.NodeExporter
+	}
+	if new.PostgresExporter.Enabled {
+		combined.PostgresExporter = new.PostgresExporter
+	}
+	if new.ApacheExporter.Enabled {
+		combined.ApacheExporter = new.ApacheExporter
+	}
+	return combined
 }
 
 // Discovery periodically performs Uyuni API requests. It implements
@@ -195,6 +220,12 @@ func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 
 	config := d.sdConfig
 	apiUrl := config.Host + "/rpc/api"
+
+	_, err := url.ParseRequestURI(apiUrl)
+	if err != nil {
+		return nil, errors.Wrap(err, "Uyuni Server URL is not valid")
+	}
+
 	rpcclient, _ := xmlrpc.NewClient(apiUrl, nil)
 	tg := &targetgroup.Group{
 		Source: config.Host,
@@ -216,6 +247,7 @@ func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 	if len(clientList) == 0 {
 		fmt.Printf("\tFound 0 systems.\n")
 	} else {
+
 		for _, client := range clientList {
 			netInfo := networkInfo{}
 			formulas := formulaData{}
@@ -232,43 +264,55 @@ func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 
 			// Check if system is monitoring entitled
 			for _, v := range details.Entitlements {
-				if v == "monitoring_entitled" {
+				if v == "monitoring_entitled" { // golang has no native method to check if an element is part of a slice
+
 					// Get network details
 					netInfo, err = GetSystemNetworkInfo(rpcclient, token, client.Id)
 					if err != nil {
 						level.Error(d.logger).Log("msg", "Error getting network information", "clientId", client.Id, "err", err)
 						continue
 					}
-					// Get detailed formula list
-					formulas, err = GetSystemFormulaData(rpcclient, token, client.Id, "prometheus-exporters")
-					if err != nil {
-						level.Error(d.logger).Log("msg", "Error getting formulas", "clientId", client.Id, "err", err)
-						continue
-					}
+
 					// Get list of groups this system is assigned to
 					groups, err = ListSystemGroups(rpcclient, token, client.Id)
 					if err != nil {
 						level.Error(d.logger).Log("msg", "Error getting system groups", "clientId", client.Id, "err", err)
 						continue
 					}
-					// replace spaces with dashes on all group names
 					subGroups := []string{}
 					for _, g := range groups {
+						// get list of group formulas
+						// TODO: Put the resulting data on a map so that we do not have to repeat the call below for every system
 						if g.Subscribed == 1 {
+							groupFormulas, err := GetGroupFormulaData(rpcclient, token, g.Id, "prometheus-exporters")
+							if err != nil {
+								level.Error(d.logger).Log("msg", "Error getting group formulas", "groupId", client.Id, "err", err)
+								continue
+							}
+							formulas = GetCombinedFormula(formulas, groupFormulas)
+							// replace spaces with dashes on all group names
 							subGroups = append(subGroups, strings.ToLower(strings.ReplaceAll(g.SystemGroupName, " ", "-")))
 						}
 					}
 
+					// Get system formula list
+					systemFormulas, err := GetSystemFormulaData(rpcclient, token, client.Id, "prometheus-exporters")
+					if err != nil {
+						level.Error(d.logger).Log("msg", "Error getting system formulas", "clientId", client.Id, "err", err)
+						continue
+					}
+					formulas = GetCombinedFormula(formulas, systemFormulas)
+
 					// Iterate list of formulas and check for enabled exporters
-					for _, f := range []exporterConfig{formulas.NodeExporter, formulas.PostgresExporter} {
+					for _, f := range []exporterConfig{formulas.NodeExporter, formulas.PostgresExporter, formulas.ApacheExporter} {
 						if f.Enabled {
-							port, err := ExtractPortFromFormulaData(formulas.NodeExporter.Args)
+							port, err := ExtractPortFromFormulaData(f.Args)
 							if err != nil {
 								level.Error(d.logger).Log("msg", "Unable to read exporter port", "clientId", client.Id, "err", err)
 								continue
 							}
 							labels := model.LabelSet{}
-							addr := fmt.Sprintf("%s:%d", netInfo.Ip, port)
+							addr := fmt.Sprintf("%s:%s", netInfo.Ip, port)
 							labels[model.AddressLabel] = model.LabelValue(addr)
 							labels["hostname"] = model.LabelValue(details.Hostname)
 							labels["groups"] = model.LabelValue(strings.Join(subGroups, ","))
