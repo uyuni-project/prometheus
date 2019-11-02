@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-kit/kit/log"
@@ -44,7 +45,7 @@ var DefaultSDConfig = SDConfig{
 }
 
 // Regular expression to extract port from formula data
-var monFormulaRegex = regexp.MustCompile(`--web\.listen-address=\":([0-9]*)\"`)
+var monFormulaRegex = regexp.MustCompile(`--(?:telemetry\.address|web\.listen-address)=\":([0-9]*)\"`)
 
 // SDConfig is the configuration for Uyuni based service discovery.
 type SDConfig struct {
@@ -56,24 +57,24 @@ type SDConfig struct {
 
 // Uyuni API Response structures
 type clientRef struct {
-	Id   int    `xmlrpc:"id"`
+	ID   int    `xmlrpc:"id"`
 	Name string `xmlrpc:"name"`
 }
 
 type systemDetail struct {
-	Id           int      `xmlrpc:"id"`
+	ID           int      `xmlrpc:"id"`
 	Hostname     string   `xmlrpc:"hostname"`
 	Entitlements []string `xmlrpc:"addon_entitlements"`
 }
 
 type groupDetail struct {
-	Id              int    `xmlrpc:"id"`
+	ID              int    `xmlrpc:"id"`
 	Subscribed      int    `xmlrpc:"subscribed"`
 	SystemGroupName string `xmlrpc:"system_group_name"`
 }
 
 type networkInfo struct {
-	Ip string `xmlrpc:"ip"`
+	IP string `xmlrpc:"ip"`
 }
 
 type exporterConfig struct {
@@ -85,6 +86,15 @@ type formulaData struct {
 	NodeExporter     exporterConfig `xmlrpc:"node_exporter"`
 	PostgresExporter exporterConfig `xmlrpc:"postgres_exporter"`
 	ApacheExporter   exporterConfig `xmlrpc:"apache_exporter"`
+}
+
+// Discovery periodically performs Uyuni API requests. It implements the Discoverer interface.
+type Discovery struct {
+	*refresh.Discovery
+	client   *http.Client
+	interval time.Duration
+	sdConfig *SDConfig
+	logger   log.Logger
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
@@ -145,7 +155,7 @@ func ListSystemGroups(rpcclient *xmlrpc.Client, token string, systemId int) ([]g
 	return result, err
 }
 
-// List client FQDNs
+// GetSystemNetworkInfo lists client FQDNs
 func GetSystemNetworkInfo(rpcclient *xmlrpc.Client, token string, systemId int) (networkInfo, error) {
 	var result networkInfo
 	err := rpcclient.Call("system.getNetwork", []interface{}{token, systemId}, &result)
@@ -190,16 +200,6 @@ func GetCombinedFormula(combined formulaData, new formulaData) formulaData {
 	return combined
 }
 
-// Discovery periodically performs Uyuni API requests. It implements
-// the Discoverer interface.
-type Discovery struct {
-	*refresh.Discovery
-	client   *http.Client
-	interval time.Duration
-	sdConfig *SDConfig
-	logger   log.Logger
-}
-
 // NewDiscovery returns a new file discovery for the given paths.
 func NewDiscovery(conf *SDConfig, logger log.Logger) *Discovery {
 	d := &Discovery{
@@ -219,26 +219,23 @@ func NewDiscovery(conf *SDConfig, logger log.Logger) *Discovery {
 func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 
 	config := d.sdConfig
-	apiUrl := config.Host + "/rpc/api"
+	apiURL := config.Host + "/rpc/api"
 
-	_, err := url.ParseRequestURI(apiUrl)
+	// Check if the URL is valid and create rpc client
+	_, err := url.ParseRequestURI(apiURL)
 	if err != nil {
 		return nil, errors.Wrap(err, "Uyuni Server URL is not valid")
 	}
-
-	rpcclient, _ := xmlrpc.NewClient(apiUrl, nil)
-	tg := &targetgroup.Group{
-		Source: config.Host,
-	}
+	rpc, _ := xmlrpc.NewClient(apiURL, nil)
+	tg := &targetgroup.Group{Source: config.Host}
 
 	// Login into Uyuni API and get auth token
-	token, err := Login(rpcclient, config.User, config.Pass)
+	token, err := Login(rpc, config.User, config.Pass)
 	if err != nil {
 		return nil, errors.Wrap(err, "Unable to login to Uyuni API")
 	}
-
 	// Get list of managed clients from Uyuni API
-	clientList, err := ListSystems(rpcclient, token)
+	clientList, err := ListSystems(rpc, token)
 	if err != nil {
 		return nil, errors.Wrap(err, "Unable to get list of systems")
 	}
@@ -247,87 +244,99 @@ func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 	if len(clientList) == 0 {
 		fmt.Printf("\tFound 0 systems.\n")
 	} else {
+		startTime := time.Now()
+		var wg sync.WaitGroup
+		wg.Add(len(clientList))
 
-		for _, client := range clientList {
-			netInfo := networkInfo{}
-			formulas := formulaData{}
-			groups := []groupDetail{}
+		for _, cl := range clientList {
 
-			// Get the system details
-			details, err := GetSystemDetails(rpcclient, token, client.Id)
-			if err != nil {
-				level.Error(d.logger).Log("msg", "Unable to get system details", "clientId", client.Id, "err", err)
-				continue
-			}
-			jsonDetails, _ := json.Marshal(details)
-			level.Debug(d.logger).Log("msg", "System details", "details", jsonDetails)
+			go func(client clientRef) {
+				defer wg.Done()
+				rpcclient, _ := xmlrpc.NewClient(apiURL, nil)
+				netInfo := networkInfo{}
+				formulas := formulaData{}
+				groups := []groupDetail{}
 
-			// Check if system is monitoring entitled
-			for _, v := range details.Entitlements {
-				if v == "monitoring_entitled" { // golang has no native method to check if an element is part of a slice
+				// Get the system details
+				details, err := GetSystemDetails(rpcclient, token, client.ID)
 
-					// Get network details
-					netInfo, err = GetSystemNetworkInfo(rpcclient, token, client.Id)
-					if err != nil {
-						level.Error(d.logger).Log("msg", "Error getting network information", "clientId", client.Id, "err", err)
-						continue
-					}
+				if err != nil {
+					level.Error(d.logger).Log("msg", "Unable to get system details", "clientId", client.ID, "err", err)
+					return
+				}
+				jsonDetails, _ := json.Marshal(details)
+				level.Debug(d.logger).Log("msg", "System details", "details", jsonDetails)
 
-					// Get list of groups this system is assigned to
-					groups, err = ListSystemGroups(rpcclient, token, client.Id)
-					if err != nil {
-						level.Error(d.logger).Log("msg", "Error getting system groups", "clientId", client.Id, "err", err)
-						continue
-					}
-					subGroups := []string{}
-					for _, g := range groups {
-						// get list of group formulas
-						// TODO: Put the resulting data on a map so that we do not have to repeat the call below for every system
-						if g.Subscribed == 1 {
-							groupFormulas, err := GetGroupFormulaData(rpcclient, token, g.Id, "prometheus-exporters")
-							if err != nil {
-								level.Error(d.logger).Log("msg", "Error getting group formulas", "groupId", client.Id, "err", err)
-								continue
-							}
-							formulas = GetCombinedFormula(formulas, groupFormulas)
-							// replace spaces with dashes on all group names
-							subGroups = append(subGroups, strings.ToLower(strings.ReplaceAll(g.SystemGroupName, " ", "-")))
+				// Check if system is monitoring entitled
+				for _, v := range details.Entitlements {
+					if v == "monitoring_entitled" { // golang has no native method to check if an element is part of a slice
+
+						// Get network details
+						netInfo, err = GetSystemNetworkInfo(rpcclient, token, client.ID)
+						if err != nil {
+							level.Error(d.logger).Log("msg", "Error getting network information", "clientId", client.ID, "err", err)
+							return
 						}
-					}
 
-					// Get system formula list
-					systemFormulas, err := GetSystemFormulaData(rpcclient, token, client.Id, "prometheus-exporters")
-					if err != nil {
-						level.Error(d.logger).Log("msg", "Error getting system formulas", "clientId", client.Id, "err", err)
-						continue
-					}
-					formulas = GetCombinedFormula(formulas, systemFormulas)
-
-					// Iterate list of formulas and check for enabled exporters
-					for _, f := range []exporterConfig{formulas.NodeExporter, formulas.PostgresExporter, formulas.ApacheExporter} {
-						if f.Enabled {
-							port, err := ExtractPortFromFormulaData(f.Args)
-							if err != nil {
-								level.Error(d.logger).Log("msg", "Unable to read exporter port", "clientId", client.Id, "err", err)
-								continue
+						// Get list of groups this system is assigned to
+						groups, err = ListSystemGroups(rpcclient, token, client.ID)
+						if err != nil {
+							level.Error(d.logger).Log("msg", "Error getting system groups", "clientId", client.ID, "err", err)
+							return
+						}
+						subGroups := []string{}
+						for _, g := range groups {
+							// get list of group formulas
+							// TODO: Put the resulting data on a map so that we do not have to repeat the call below for every system
+							if g.Subscribed == 1 {
+								groupFormulas, err := GetGroupFormulaData(rpcclient, token, g.ID, "prometheus-exporters")
+								if err != nil {
+									level.Error(d.logger).Log("msg", "Error getting group formulas", "groupId", client.ID, "err", err)
+									return
+								}
+								formulas = GetCombinedFormula(formulas, groupFormulas)
+								// replace spaces with dashes on all group names
+								subGroups = append(subGroups, strings.ToLower(strings.ReplaceAll(g.SystemGroupName, " ", "-")))
 							}
-							labels := model.LabelSet{}
-							addr := fmt.Sprintf("%s:%s", netInfo.Ip, port)
-							labels[model.AddressLabel] = model.LabelValue(addr)
-							labels["hostname"] = model.LabelValue(details.Hostname)
-							labels["groups"] = model.LabelValue(strings.Join(subGroups, ","))
-							tg.Targets = append(tg.Targets, labels)
+						}
+
+						// Get system formula list
+						systemFormulas, err := GetSystemFormulaData(rpcclient, token, client.ID, "prometheus-exporters")
+						if err != nil {
+							level.Error(d.logger).Log("msg", "Error getting system formulas", "clientId", client.ID, "err", err)
+							return
+						}
+						formulas = GetCombinedFormula(formulas, systemFormulas)
+
+						// Iterate list of formulas and check for enabled exporters
+						for _, f := range []exporterConfig{formulas.NodeExporter, formulas.PostgresExporter, formulas.ApacheExporter} {
+							if f.Enabled {
+								port, err := ExtractPortFromFormulaData(f.Args)
+								if err != nil {
+									level.Error(d.logger).Log("msg", "Unable to read exporter port", "clientId", client.ID, "err", err)
+									return
+								}
+								labels := model.LabelSet{}
+								addr := fmt.Sprintf("%s:%s", netInfo.IP, port)
+								labels[model.AddressLabel] = model.LabelValue(addr)
+								labels["hostname"] = model.LabelValue(details.Hostname)
+								labels["groups"] = model.LabelValue(strings.Join(subGroups, ","))
+								tg.Targets = append(tg.Targets, labels)
+							}
 						}
 					}
 				}
-			}
-
-			// Log debug information
-			if netInfo.Ip != "" {
-				level.Debug(d.logger).Log("msg", "Found monitored system", "Host", details.Hostname, "Entitlements", fmt.Sprintf("%+v", details.Entitlements), "Network", fmt.Sprintf("%+v", netInfo), "Groups", fmt.Sprintf("%+v", groups), "Formulas", fmt.Sprintf("%+v", formulas))
-			}
+				// Log debug information
+				if netInfo.IP != "" {
+					level.Info(d.logger).Log("msg", "Found monitored system", "Host", details.Hostname, "Entitlements", fmt.Sprintf("%+v", details.Entitlements), "Network", fmt.Sprintf("%+v", netInfo), "Groups", fmt.Sprintf("%+v", groups), "Formulas", fmt.Sprintf("%+v", formulas))
+				}
+				rpcclient.Close()
+			}(cl)
 		}
+		wg.Wait()
+		level.Info(d.logger).Log("msg", "Total discovery time", "time", time.Since(startTime))
 	}
-	Logout(rpcclient, token)
+	Logout(rpc, token)
+	rpc.Close()
 	return []*targetgroup.Group{tg}, nil
 }
