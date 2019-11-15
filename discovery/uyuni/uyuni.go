@@ -264,36 +264,36 @@ func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 						// Get network details
 						netInfo, err = getSystemNetworkInfo(rpcclient, token, client.ID)
 						if err != nil {
-							level.Error(d.logger).Log("msg", "Error getting network information", "clientId", client.ID, "err", err)
+							level.Error(d.logger).Log("msg", "getSystemNetworkInfo failed", "clientId", client.ID, "err", err)
 							return
 						}
 
 						// Get list of groups this system is assigned to
-						groups, err = listSystemGroups(rpcclient, token, client.ID)
+						candidateGroups, err := listSystemGroups(rpcclient, token, client.ID)
 						if err != nil {
-							level.Error(d.logger).Log("msg", "Error getting system groups", "clientId", client.ID, "err", err)
+							level.Error(d.logger).Log("msg", "listSystemGroups failed", "clientId", client.ID, "err", err)
 							return
 						}
-						subGroups := []string{}
-						for _, g := range groups {
+						groups := []string{}
+						for _, g := range candidateGroups {
 							// get list of group formulas
 							// TODO: Put the resulting data on a map so that we do not have to repeat the call below for every system
 							if g.Subscribed == 1 {
 								groupFormulas, err := getGroupFormulaData(rpcclient, token, g.ID, "prometheus-exporters")
 								if err != nil {
-									level.Error(d.logger).Log("msg", "Error getting group formulas", "groupId", client.ID, "err", err)
+									level.Error(d.logger).Log("msg", "getGroupFormulaData failed", "groupId", client.ID, "err", err)
 									return
 								}
 								formulas = getCombinedFormula(formulas, groupFormulas)
 								// replace spaces with dashes on all group names
-								subGroups = append(subGroups, strings.ToLower(strings.ReplaceAll(g.SystemGroupName, " ", "-")))
+								groups = append(groups, strings.ToLower(strings.ReplaceAll(g.SystemGroupName, " ", "-")))
 							}
 						}
 
 						// Get system formula list
 						systemFormulas, err := getSystemFormulaData(rpcclient, token, client.ID, "prometheus-exporters")
 						if err != nil {
-							level.Error(d.logger).Log("msg", "Error getting system formulas", "clientId", client.ID, "err", err)
+							level.Error(d.logger).Log("msg", "getSystemFormulaData failed", "clientId", client.ID, "err", err)
 							return
 						}
 						formulas = getCombinedFormula(formulas, systemFormulas)
@@ -303,23 +303,30 @@ func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 							if v.Enabled {
 								port, err := extractPortFromFormulaData(v.Args)
 								if err != nil {
-									level.Error(d.logger).Log("msg", "Unable to read exporter port", "clientId", client.ID, "err", err)
+									level.Error(d.logger).Log("msg", "Invalid exporter port", "clientId", client.ID, "err", err)
 									return
 								}
-								labels := model.LabelSet{}
+								targets := model.LabelSet{}
 								addr := fmt.Sprintf("%s:%s", netInfo.IP, port)
-								labels[model.AddressLabel] = model.LabelValue(addr)
-								labels["exporter"] = model.LabelValue(k)
-								labels["hostname"] = model.LabelValue(details.Hostname)
-								labels["groups"] = model.LabelValue(strings.Join(subGroups, ","))
-								tg.Targets = append(tg.Targets, labels)
+								targets[model.AddressLabel] = model.LabelValue(addr)
+								targets["exporter"] = model.LabelValue(k)
+								targets["hostname"] = model.LabelValue(details.Hostname)
+								targets["groups"] = model.LabelValue(strings.Join(groups, ","))
+								for _, g := range groups {
+									gname := fmt.Sprintf("grp:%s", g)
+									targets[model.LabelName(gname)] = model.LabelValue("active")
+								}
+								tg.Targets = append(tg.Targets, targets)
 							}
 						}
 					}
 				}
 				// Log debug information
 				if netInfo.IP != "" {
-					level.Info(d.logger).Log("msg", "Found monitored system", "Host", details.Hostname, "Entitlements", fmt.Sprintf("%+v", details.Entitlements), "Network", fmt.Sprintf("%+v", netInfo), "Groups", fmt.Sprintf("%+v", groups), "Formulas", fmt.Sprintf("%+v", formulas))
+					level.Info(d.logger).Log("msg", "Found monitored system", "Host", details.Hostname,
+						"Entitlements", fmt.Sprintf("%+v", details.Entitlements),
+						"Network", fmt.Sprintf("%+v", netInfo), "Groups",
+						fmt.Sprintf("%+v", groups), "Formulas", fmt.Sprintf("%+v", formulas))
 				}
 				rpcclient.Close()
 			}(cl)
