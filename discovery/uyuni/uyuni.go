@@ -313,7 +313,7 @@ func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 								targets["hostname"] = model.LabelValue(details.Hostname)
 								targets["groups"] = model.LabelValue(strings.Join(groups, ","))
 								for _, g := range groups {
-									gname := fmt.Sprintf("grp:%s", g)
+									gname := fmt.Sprintf("grp_%s", g)
 									targets[model.LabelName(gname)] = model.LabelValue("active")
 								}
 								tg.Targets = append(tg.Targets, targets)
