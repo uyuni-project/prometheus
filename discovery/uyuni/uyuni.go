@@ -208,9 +208,14 @@ func (d *Discovery) getTargetsForSystem(systemID int, systemGroupsIDs []systemGr
 				for _, systemGroupInfo := range systemGroupsIDs {
 					managedGroupNames = append(managedGroupNames, systemGroupInfo.GroupName)
 				}
-				targets["groups"] = model.LabelValue(strings.Join(managedGroupNames, ","))
 
+				if len(managedGroupNames) == 0 {
+					managedGroupNames = []string{"No group"}
+				}
+
+				targets["groups"] = model.LabelValue(strings.Join(managedGroupNames, ","))
 				labelSets = append(labelSets, targets)
+
 			} else {
 				level.Error(d.logger).Log("msg", "Invalid exporter port", "clientId", systemID, "err", err)
 			}
