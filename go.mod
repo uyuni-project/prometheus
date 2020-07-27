@@ -38,6 +38,7 @@ require (
 	github.com/hetznercloud/hcloud-go v1.22.0
 	github.com/influxdata/influxdb v1.8.3
 	github.com/json-iterator/go v1.1.10
+	github.com/kolo/xmlrpc v0.0.0-20201022064351-38db28db192b
 	github.com/miekg/dns v1.1.31
 	github.com/mitchellh/mapstructure v1.2.2 // indirect
 	github.com/morikuni/aec v1.0.0 // indirect
