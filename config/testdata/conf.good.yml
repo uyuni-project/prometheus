@@ -292,6 +292,12 @@ scrape_configs:
   eureka_sd_configs:
     - server: 'http://eureka.example.com:8761/eureka'
 
+- job_name: uyuni
+  uyuni_sd_configs:
+    - host: http://example.uyuni-project.org
+      username: gopher
+      password: hole
+
 alerting:
   alertmanagers:
   - scheme: https
