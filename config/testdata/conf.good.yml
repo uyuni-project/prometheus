@@ -309,6 +309,12 @@ scrape_configs:
       access_key: SCWXXXXXXXXXXXXXXXXX
       secret_key: 11111111-1111-1111-1111-111111111111
 
+- job_name: uyuni
+  uyuni_sd_configs:
+    - host: http://example.uyuni-project.org
+      username: gopher
+      password: hole
+
 alerting:
   alertmanagers:
   - scheme: https
