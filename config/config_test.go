@@ -42,6 +42,7 @@ import (
 	"github.com/prometheus/prometheus/discovery/openstack"
 	"github.com/prometheus/prometheus/discovery/targetgroup"
 	"github.com/prometheus/prometheus/discovery/triton"
+	"github.com/prometheus/prometheus/discovery/uyuni"
 	"github.com/prometheus/prometheus/discovery/zookeeper"
 	"github.com/prometheus/prometheus/pkg/labels"
 	"github.com/prometheus/prometheus/pkg/relabel"
@@ -692,6 +693,24 @@ var expectedConf = &Config{
 				Server:          "http://eureka.example.com:8761/eureka",
 				RefreshInterval: model.Duration(30 * time.Second),
 			},
+			},
+		},
+		{
+			JobName:         "uyuni",
+			HonorTimestamps: true,
+			ScrapeInterval:  model.Duration(15 * time.Second),
+			ScrapeTimeout:   DefaultGlobalConfig.ScrapeTimeout,
+
+			MetricsPath: DefaultScrapeConfig.MetricsPath,
+			Scheme:      DefaultScrapeConfig.Scheme,
+
+			ServiceDiscoveryConfigs: discovery.Configs{
+				&uyuni.SDConfig{
+					Host: "http://example.uyuni-project.org",
+					User: "gopher",
+					Pass: "hole",
+					RefreshInterval: model.Duration(60 * time.Second),
+				},
 			},
 		},
 	},

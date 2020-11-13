@@ -247,6 +247,10 @@ serverset_sd_configs:
 triton_sd_configs:
   [ - <triton_sd_config> ... ]
 
+# List of Uyuni service discovery configurations.
+uyuni_sd_configs:
+  [ - <uyuni_sd_config> ... ]
+
 # List of labeled statically configured targets for this job.
 static_configs:
   [ - <static_config> ... ]
@@ -1453,6 +1457,27 @@ See [the Prometheus eureka-sd configuration file](/documentation/examples/promet
 for a practical example on how to set up your Eureka app and your Prometheus
 configuration.
 
+### `<uyuni_sd_config>`
+
+Uyuni SD configurations allow retrieving scrape targets from managed systems
+via [Uyuni](https://www.uyuni-project.org/) API.
+
+See below for the configuration options for Uyuni discovery:
+
+```yaml
+# The URL to connect to the Uyuni server.
+host: <string>
+
+# Credentials are used to authenticate the requests to Uyuni API.
+username: <string>
+password: <string>
+
+# Refresh interval to re-read the managed targets list.
+[ refresh_interval: <duration> | default = 60s ]
+```
+
+See [the Prometheus uyuni-sd configuration file](/documentation/examples/prometheus-uyuni.yml)
+for a practical example on how to set up Uyuni Prometheus configuration.
 
 ### `<static_config>`
 
