@@ -68,6 +68,7 @@ type systemGroupID struct {
 type networkInfo struct {
 	SystemID int    `xmlrpc:"system_id"`
 	Hostname string `xmlrpc:"hostname"`
+	FQDN     string `xmlrpc:"fqdn"`
 	IP       string `xmlrpc:"ip"`
 }
 
@@ -274,8 +275,14 @@ func (d *Discovery) getTargetsForSystem(
 	var labelSets []model.LabelSet
 	var errors []error
 	var proxyPortNumber string
+	var hostname string
 	if combinedFormulaData.ProxyIsEnabled {
 		proxyPortNumber = fmt.Sprintf("%d", int(combinedFormulaData.ProxyPort))
+	}
+	if len(networkInfo.FQDN) > 0 {
+		hostname = networkInfo.FQDN
+	} else {
+		hostname = networkInfo.Hostname
 	}
 	initializeExporterTargets(&labelSets, "node", combinedFormulaData.NodeExporter, proxyPortNumber, &errors)
 	initializeExporterTargets(&labelSets, "apache", combinedFormulaData.ApacheExporter, proxyPortNumber, &errors)
@@ -283,9 +290,9 @@ func (d *Discovery) getTargetsForSystem(
 	managedGroupNames := getSystemGroupNames(systemGroupsIDs)
 	for _, labels := range labelSets {
 		// add hostname to the address label
-		addr := fmt.Sprintf("%s:%s", networkInfo.IP, labels[model.AddressLabel])
+		addr := fmt.Sprintf("%s:%s", hostname, labels[model.AddressLabel])
 		labels[model.AddressLabel] = model.LabelValue(addr)
-		labels["hostname"] = model.LabelValue(networkInfo.Hostname)
+		labels["hostname"] = model.LabelValue(hostname)
 		labels["groups"] = model.LabelValue(strings.Join(managedGroupNames, ","))
 		if combinedFormulaData.ProxyIsEnabled {
 			labels[model.MetricsPathLabel] = "/proxy"
@@ -344,7 +351,8 @@ func (d *Discovery) getTargetsForSystems(
 		// Log debug information
 		if networkInfoBySystemID[systemID].IP != "" {
 			level.Debug(d.logger).Log("msg", "Found monitored system",
-				"Host", networkInfoBySystemID[systemID].Hostname,
+				"FQDN", networkInfoBySystemID[systemID].FQDN,
+				"Hostname", networkInfoBySystemID[systemID].Hostname,
 				"Network", fmt.Sprintf("%+v", networkInfoBySystemID[systemID]),
 				"Groups", fmt.Sprintf("%+v", systemGroupIDsBySystemID[systemID]),
 				"Formulas", fmt.Sprintf("%+v", combinedFormulaDataBySystemID[systemID]))
