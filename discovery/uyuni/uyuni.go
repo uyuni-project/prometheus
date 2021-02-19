@@ -66,10 +66,10 @@ type systemGroupID struct {
 }
 
 type networkInfo struct {
-	SystemID int    `xmlrpc:"system_id"`
-	Hostname string `xmlrpc:"hostname"`
-	FQDN     string `xmlrpc:"fqdn"`
-	IP       string `xmlrpc:"ip"`
+	SystemID    int    `xmlrpc:"system_id"`
+	Hostname    string `xmlrpc:"hostname"`
+	PrimaryFQDN string `xmlrpc:"primary_fqdn"`
+	IP          string `xmlrpc:"ip"`
 }
 
 type exporterConfig struct {
@@ -279,8 +279,8 @@ func (d *Discovery) getTargetsForSystem(
 	if combinedFormulaData.ProxyIsEnabled {
 		proxyPortNumber = fmt.Sprintf("%d", int(combinedFormulaData.ProxyPort))
 	}
-	if len(networkInfo.FQDN) > 0 {
-		hostname = networkInfo.FQDN
+	if len(networkInfo.PrimaryFQDN) > 0 {
+		hostname = networkInfo.PrimaryFQDN
 	} else {
 		hostname = networkInfo.Hostname
 	}
@@ -351,7 +351,7 @@ func (d *Discovery) getTargetsForSystems(
 		// Log debug information
 		if networkInfoBySystemID[systemID].IP != "" {
 			level.Debug(d.logger).Log("msg", "Found monitored system",
-				"FQDN", networkInfoBySystemID[systemID].FQDN,
+				"PrimaryFQDN", networkInfoBySystemID[systemID].PrimaryFQDN,
 				"Hostname", networkInfoBySystemID[systemID].Hostname,
 				"Network", fmt.Sprintf("%+v", networkInfoBySystemID[systemID]),
 				"Groups", fmt.Sprintf("%+v", systemGroupIDsBySystemID[systemID]),
