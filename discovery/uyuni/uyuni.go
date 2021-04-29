@@ -79,11 +79,9 @@ type exporterConfig struct {
 }
 
 type proxiedExporterConfig struct {
-	ProxyIsEnabled   bool           `xmlrpc:"proxy_enabled"`
-	ProxyPort        float32        `xmlrpc:"proxy_port"`
-	NodeExporter     exporterConfig `xmlrpc:"node_exporter"`
-	ApacheExporter   exporterConfig `xmlrpc:"apache_exporter"`
-	PostgresExporter exporterConfig `xmlrpc:"postgres_exporter"`
+	ProxyIsEnabled  bool                      `xmlrpc:"proxy_enabled"`
+	ProxyPort       float32                   `xmlrpc:"proxy_port"`
+	ExporterConfigs map[string]exporterConfig `xmlrpc:"exporters"`
 }
 
 // Discovery periodically performs Uyuni API requests. It implements the Discoverer interface.
@@ -236,7 +234,7 @@ func NewDiscovery(conf *SDConfig, logger log.Logger) *Discovery {
 
 func initializeExporterTargets(
 	targets *[]model.LabelSet,
-	module string, config exporterConfig,
+	exporterName string, config exporterConfig,
 	proxyPort string,
 	errors *[]error,
 ) {
@@ -256,11 +254,11 @@ func initializeExporterTargets(
 	}
 
 	labels := model.LabelSet{}
-	labels["exporter"] = model.LabelValue(module + "_exporter")
+	labels["exporter"] = model.LabelValue(exporterName)
 	// for now set only port number here
 	labels[model.AddressLabel] = model.LabelValue(port)
 	if len(proxyPort) > 0 {
-		labels[model.ParamLabelPrefix+"module"] = model.LabelValue(module)
+		labels[model.ParamLabelPrefix+"module"] = model.LabelValue(exporterName)
 	}
 	*targets = append(*targets, labels)
 }
@@ -284,9 +282,9 @@ func (d *Discovery) getTargetsForSystem(
 	} else {
 		hostname = networkInfo.Hostname
 	}
-	initializeExporterTargets(&labelSets, "node", combinedFormulaData.NodeExporter, proxyPortNumber, &errors)
-	initializeExporterTargets(&labelSets, "apache", combinedFormulaData.ApacheExporter, proxyPortNumber, &errors)
-	initializeExporterTargets(&labelSets, "postgres", combinedFormulaData.PostgresExporter, proxyPortNumber, &errors)
+	for exporterName, formulaValues := range combinedFormulaData.ExporterConfigs {
+		initializeExporterTargets(&labelSets, exporterName, formulaValues, proxyPortNumber, &errors)
+	}
 	managedGroupNames := getSystemGroupNames(systemGroupsIDs)
 	for _, labels := range labelSets {
 		// add hostname to the address label
