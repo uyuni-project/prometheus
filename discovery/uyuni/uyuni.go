@@ -72,6 +72,10 @@ type networkInfo struct {
 	IP          string `xmlrpc:"ip"`
 }
 
+type tlsConfig struct {
+	Enabled bool `xmlrpc:"enabled"`
+}
+
 type exporterConfig struct {
 	Address string `xmlrpc:"address"`
 	Args    string `xmlrpc:"args"`
@@ -81,6 +85,7 @@ type exporterConfig struct {
 type proxiedExporterConfig struct {
 	ProxyIsEnabled  bool                      `xmlrpc:"proxy_enabled"`
 	ProxyPort       float32                   `xmlrpc:"proxy_port"`
+	TLSConfig       tlsConfig                 `xmlrpc:"tls"`
 	ExporterConfigs map[string]exporterConfig `xmlrpc:"exporters"`
 }
 
@@ -294,6 +299,9 @@ func (d *Discovery) getTargetsForSystem(
 		labels["groups"] = model.LabelValue(strings.Join(managedGroupNames, ","))
 		if combinedFormulaData.ProxyIsEnabled {
 			labels[model.MetricsPathLabel] = "/proxy"
+		}
+		if combinedFormulaData.TLSConfig.Enabled {
+			labels[model.SchemeLabel] = "https"
 		}
 		_ = level.Debug(d.logger).Log("msg", "Configured target", "Labels", fmt.Sprintf("%+v", labels))
 	}
