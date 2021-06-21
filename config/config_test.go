@@ -899,7 +899,7 @@ var expectedConf = &Config{
 					Username:        "gopher",
 					Password:        "hole",
 					Entitlement:     "monitoring_entitled",
-					GroupsSeparator: ",",
+					Separator:       ",",
 					RefreshInterval: model.Duration(60 * time.Second),
 				},
 			},
